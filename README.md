@@ -1,4 +1,4 @@
-We aim to provide a simulation game that attempts to investigate and define the best situation i.e. defense, park) for a pitcher. 
+We provide PitcherOptimize, an app and model that attempts to investigate and define the best situation i.e. defense, park) for a pitcher. 
 
 A user inputs a pitcher, team, and ballpark, and will get a comparison of the predicted BABIP relative to the current situation, as well as the top predicted combinations for the pitcher.
 
