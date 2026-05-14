@@ -116,6 +116,7 @@ head(oaa_summary)
 ## save park factors 2024-2026 in a vector
 park_factors <- c(
   "Rockies" = 112,
+  "Athletics" = 109,
   "Twins" = 104,
   "D-backs" = 104,
   "Orioles" = 103,
@@ -243,6 +244,8 @@ rmse
 mae
 ```
 ```{r}
+
+## test with Logan Webb
 pitcher_name <- "Logan Webb"
 new_team <- "Guardians"
 new_park <- "Rockies"
@@ -277,130 +280,220 @@ counterfactual_babip
 
 counterfactual_babip - current_babip
 ```
-
 ```{r}
-teams = c(
-  "Diamondbacks", "Dodgers", "Giants", "Padres", "Rockies",
-  "Cubs", "Cardinals", "Brewers", "Pirates", "Reds",
-  "Braves", "Mets", "Nationals", "Marlins", "Phillies",
-  "Angels", "Athletics", "Astros", "Mariners", "Rangers",
-  "Royals", "Tigers", "Guardians", "White Sox", "Twins",
-  "Yankees", "Red Sox", "Orioles", "Rays", "Blue Jays"
-)
-
-team_map = c(
-  "AZ" = "Diamondbacks",
-  "ATL" = "Braves",
-  "BAL" = "Orioles",
-  "BOS" = "Red Sox",
-  "CHC" = "Cubs",
-  "CWS" = "White Sox",
-  "CIN" = "Reds",
-  "CLE" = "Guardians",
-  "COL" = "Rockies",
-  "DET" = "Tigers",
-  "HOU" = "Astros",
-  "KC" = "Royals",
-  "ANA" = "Angels",
-  "LAN" = "Dodgers",
-  "MIA" = "Marlins",
-  "MIL" = "Brewers",
-  "MIN" = "Twins",
-  "NYM" = "Mets",
-  "NYY" = "Yankees",
-  "OAK" = "Athletics",
-  "PHI" = "Phillies",
-  "PIT" = "Pirates",
-  "SD" = "Padres",
-  "SEA" = "Mariners",
-  "SF" = "Giants",
-  "STL" = "Cardinals",
-  "TB" = "Rays",
-  "TEX" = "Rangers",
-  "TOR" = "Blue Jays",
-  "WSH" = "Nationals"
-)
-
-data(People)
-
-lg_average = read_csv("lg_average.csv")
-```
-
-```{r}
-ui = fluidPage(
-  p("Hello! Please enter a player's name and a team name. The aim of this app is to determine the best situation for a pitcher. Choose a team that the pitcher is not currently on and then we will determine if that team is a better situation for the pitcher."),
-  textInput("pitcher", "Pitcher Name"),
-  selectInput("team", "New Team", teams),
-  actionButton("submit","Run Simulation"),
-  br(),
-  br(),
-  textOutput("result"),
-  tableOutput("stats")
-)
-```
-
-```{r}
-server = function(input, output) {
+## ranks BABIP out of all possible ballpark/defense combos 
+rank_counterfactuals <- function(pitcher_name) {
   
-  simulation_results <- eventReactive(input$submit, {
-    
-    pitcher <- input$pitcher
-    new_team <- input$team
-    
-    player_id <- People %>%
-      mutate(full_name = paste(nameFirst, nameLast)) %>%
-      filter(full_name == input$pitcher) %>%
-      pull(playerID)
-    
-    pitching = Pitching %>%
-      dplyr::select(playerID, teamID, yearID, W,  L, IPouts, H, ER, HR, BB, HBP, SO, ERA) %>%
-      filter(playerID == player_id) %>%
-      mutate(IP = IPouts / 3) %>%
-      mutate(WHIP = 3*(H + BB)/IPouts) %>%
-      mutate(SOper9 = (SO / IP) * 9) %>%
-      mutate(SOperBB = SO / BB) %>%
-      arrange(desc(yearID))
-    
-    averages = lg_average %>%
-      filter(Year == pitching$yearID[1])
-    
-    pitching_metrics = pitching %>%
-      mutate(ERAplus = 100 * (averages$ERA[1] / ERA))
-    
-    # EXAMPLE PLACEHOLDER VALUES
-    projected_era_plus = 100
-    
-    pitching = pitching %>%
-      mutate(teamID = recode(teamID, !!!team_map))
-    team = pitching$teamID[1]
-    if (projected_era_plus > pitching_metrics$ERAplus[1]) {
-      team = new_team
-    }
-    
-    result <- paste(
-      "The better situation for",
-      pitcher,
-      "is the",
-      team
+  pitcher_row <- model_data %>%
+    filter(PlayerName == pitcher_name) %>%
+    slice(1)
+  
+  current_team <- pitcher_row$display_team_name[1]
+  
+  current_pred <- predict(
+    babip_model,
+    newdata = pitcher_row
+  )[1]
+  
+  defense_options <- oaa_summary %>%
+    filter(display_team_name != current_team) %>%
+    select(
+      defense_team = display_team_name,
+      left_side_oaa,
+      right_side_oaa,
+      outfield_oaa
     )
-    
-    
-    list(
-      result = result,
-      pitching_metrics = pitching_metrics
+  
+  park_options <- park_factors_df %>%
+    filter(display_team_name != current_team) %>%
+    rename(
+      park_team = display_team_name
     )
-  })
   
-  output$result <- renderText({
-    simulation_results()$result
-  })
+  cf_grid <- crossing(
+    defense_options,
+    park_options
+  )
   
-  output$stats <- renderTable({
-    simulation_results()$pitching_metrics
-  })
+  cf_preds <- cf_grid %>%
+    mutate(
+      PlayerName = pitcher_name,
+      K_pct = pitcher_row$K_pct,
+      BB_pct = pitcher_row$BB_pct,
+      GB_pct = pitcher_row$GB_pct,
+      LD_pct = pitcher_row$LD_pct,
+      Hard_pct = pitcher_row$Hard_pct
+    ) %>%
+    mutate(
+      predicted_babip = round(
+        predict(babip_model, newdata = .),
+        3
+      ),
+      
+      current_team = current_team,
+      
+      current_babip = round(current_pred, 3),
+      
+      babip_diff = round(
+        predicted_babip - current_babip,
+        3
+      )
+    ) %>%
+    arrange(predicted_babip) %>%
+    mutate(
+      rank = row_number(),
+      
+      current_rank = rank(
+        c(predicted_babip, current_babip),
+        ties.method = "first"
+      )[length(predicted_babip) + 1],
+      
+      babip_diff_label = ifelse(
+        babip_diff >= 0,
+        paste0("+", sprintf("%.3f", babip_diff)),
+        sprintf("%.3f", babip_diff)
+      )
+    ) %>%
+    select(
+      rank,
+      current_babip,
+      defense_team,
+      park_team,
+      predicted_babip,
+      babip_diff_label
+    )
+  
+  cf_preds
 }
-
 ```
+
+```{r}
+## compares BABIP to original player situation
+compare_counterfactual <- function(
+  pitcher_name,
+  new_defense_team,
+  new_park_team
+) {
+  
+  pitcher_row <- model_data %>%
+    filter(PlayerName == pitcher_name) %>%
+    slice(1)
+  
+  current_pred <- predict(
+    babip_model,
+    newdata = pitcher_row
+  )[1]
+  
+  defense_row <- oaa_summary %>%
+    filter(display_team_name == new_defense_team)
+  
+  park_row <- park_factors_df %>%
+    filter(display_team_name == new_park_team)
+  
+  cf_row <- pitcher_row %>%
+    mutate(
+      left_side_oaa = defense_row$left_side_oaa,
+      right_side_oaa = defense_row$right_side_oaa,
+      outfield_oaa = defense_row$outfield_oaa,
+      park_factor = park_row$park_factor
+    )
+  
+  new_pred <- predict(
+    babip_model,
+    newdata = cf_row
+  )[1]
+  
+  diff <- new_pred - current_pred
+  
+  tibble(
+    pitcher = pitcher_name,
+    
+    current_team = pitcher_row$display_team_name[1],
+    
+    current_babip = sprintf("%.3f", current_pred),
+    
+    new_defense_team = new_defense_team,
+    
+    new_park_team = new_park_team,
+    
+    new_babip = sprintf("%.3f", new_pred),
+    
+    babip_diff = ifelse(
+      diff >= 0,
+      paste0("+", sprintf("%.3f", diff)),
+      sprintf("%.3f", diff)
+    ),
+    
+    interpretation = ifelse(
+      diff < 0,
+      "Lower BABIP allowed",
+      "Higher BABIP allowed"
+    )
+  )
+}
+```
+
+```{r}
+## test with Logan Webb 
+webb_results <- rank_counterfactuals("Logan Webb")
+webb_results %>% head(10)
+
+compare_counterfactual(
+  pitcher_name = "Logan Webb",
+  new_defense_team = "Cubs",
+  new_park_team = "Mariners"
+)
+```
+
+
+
+```{r}
+ui <- fluidPage(
+  p("Hello! Please enter a pitcher's name, new defense/team, and ballpark. The app compares the pitcher's current predicted situation to the selected defense and park, then shows the top 10 predicted BABIP environments."),
+
+  textInput("pitcher", "Pitcher Name"),
+  selectInput("team", "New Defense / Team", choices = teams),
+  selectInput("park", "New Ballpark / Park", choices = sort(unique(park_factors_df$display_team_name))),
+
+  actionButton("submit", "Run Simulation"),
+  br(), br(),
+
+  h4("Selected Counterfactual"),
+  tableOutput("stats"),
+
+  br(),
+
+  h4("Top 10 Counterfactual Situations"),
+  tableOutput("top10")
+)
+
+server <- function(input, output) {
+
+  selected_result <- eventReactive(input$submit, {
+    compare_counterfactual(
+      pitcher_name = input$pitcher,
+      new_defense_team = input$team,
+      new_park_team = input$park
+    )
+  })
+
+  top10_result <- eventReactive(input$submit, {
+    rank_counterfactuals(input$pitcher) %>%
+      arrange(predicted_babip) %>%
+      head(10)
+  })
+
+  output$stats <- renderTable({
+    selected_result()
+  })
+
+  output$top10 <- renderTable({
+    top10_result()
+  },
+  digits = 3)
+}
+```
+
 
 ```{r}
 shinyApp(ui = ui, server = server)
