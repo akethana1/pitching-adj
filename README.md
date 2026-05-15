@@ -28,4 +28,6 @@ We leave an example with Logan Webb for the user to try.
 
 We also define a Shiny server for the user to input any combination they would like, and experiment with all sorts of combinations. 
 
+Presentation Video: https://drive.google.com/file/d/1aruiITnJJzR1FFTKjlQ8lljpqJxE1s53/view?ts=6a0788a4
+
 
